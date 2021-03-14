@@ -22,17 +22,19 @@ const Version = "1.4.0"
 const CREDENTIALS = "GOOGLE_APPLICATION_CREDENTIALS"
 
 var (
-	pgConn      = flag.String("uri", "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable", "postgres connection uri")
-	pgSchema    = flag.String("schema", "public", "postgres schema")
-	pgTable     = flag.String("table", "", "postgres table name")
-	datasetId   = flag.String("dataset", "", "BigQuery dataset")
-	projectId   = flag.String("project", "", "BigQuery project id")
-	partitions  = flag.Int("partitions", -1, "Number of per-day partitions, -1 to disable")
-	versionFlag = flag.Bool("version", false, "Print program version")
-	labelKey    = flag.String("label-key", "", "Combined with --label-value, name for label on BigQuery table metadata")
-	labelValue  = flag.String("label-value", "", "Combined with --label-key, value for label on BigQuery table metadata")
-	exclude     = flag.String("exclude", "", "columns to exclude")
-	ignoreTypes = flag.Bool("ignore-unknown-types", false, "Ignore unknown column types")
+	pgConn       = flag.String("uri", "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable", "postgres connection uri")
+	pgSchema     = flag.String("schema", "public", "postgres schema")
+	pgTable      = flag.String("table", "", "postgres table name")
+	datasetId    = flag.String("dataset", "", "BigQuery dataset")
+	projectId    = flag.String("project", "", "BigQuery project id")
+	partitions   = flag.Int("partitions", -1, "Number of per-day partitions, -1 to disable")
+	partitionCol = flag.String("partition-column", "_PARTITIONTIME", "Column for per-day partitioning")
+	partitionDt  = flag.String("partition-date", "", "Value to filter by when using per-day partitioning")
+	versionFlag  = flag.Bool("version", false, "Print program version")
+	labelKey     = flag.String("label-key", "", "Combined with --label-value, name for label on BigQuery table metadata")
+	labelValue   = flag.String("label-value", "", "Combined with --label-key, value for label on BigQuery table metadata")
+	exclude      = flag.String("exclude", "", "columns to exclude")
+	ignoreTypes  = flag.Bool("ignore-unknown-types", false, "Ignore unknown column types")
 )
 
 type Column struct {
@@ -111,15 +113,23 @@ func columnsFromSchema(schema bigquery.Schema) string {
 	cols := make([]string, len(schema))
 	for i, field := range schema {
 		cols[i] = pq.QuoteIdentifier(field.Name)
-        if field.Type == bigquery.StringFieldType {
-            cols[i] = cols[i] + "::text"
-        }
+		if field.Type == bigquery.StringFieldType {
+			cols[i] = cols[i] + "::text"
+		}
 	}
 	return strings.Join(cols, ",")
 }
 
+func getQuery(schema bigquery.Schema, pgSchema, table string) string {
+	if *partitionDt != "" {
+		return fmt.Sprintf(`SELECT row_to_json(t) FROM (SELECT %s FROM %s.%s WHERE DATE_TRUNC('day', %s) = '%s') AS t`, columnsFromSchema(schema), pq.QuoteIdentifier(pgSchema), pq.QuoteIdentifier(table), pq.QuoteIdentifier(*partitionCol), *partitionDt)
+	} else {
+		return fmt.Sprintf(`SELECT row_to_json(t) FROM (SELECT %s FROM %s.%s) AS t`, columnsFromSchema(schema), pq.QuoteIdentifier(pgSchema), pq.QuoteIdentifier(table))
+	}
+}
+
 func getRowsStream(db *sql.DB, schema bigquery.Schema, pgSchema, table string) io.Reader {
-	rows, err := db.Query(fmt.Sprintf(`SELECT row_to_json(t) FROM (SELECT %s FROM %s.%s) AS t`, columnsFromSchema(schema), pq.QuoteIdentifier(pgSchema), pq.QuoteIdentifier(table)))
+	rows, err := db.Query(getQuery(schema, pgSchema, table))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -182,6 +192,7 @@ func main() {
 		if partitioned {
 			metadata.TimePartitioning = &bigquery.TimePartitioning{
 				Expiration: time.Duration(*partitions) * 24 * time.Hour,
+				Field:      *partitionCol,
 			}
 		}
 		if *labelKey != "" && *labelValue != "" {
@@ -202,7 +213,11 @@ func main() {
 	}
 
 	if partitioned {
-		table.TableID += time.Now().UTC().Format("$20060102")
+		if *partitionDt != "" {
+			table.TableID += fmt.Sprintf("$%s", strings.Replace(*partitionDt, "-", "", -1))
+		} else {
+			table.TableID += time.Now().UTC().Format("$20060102")
+		}
 	}
 
 	log.Println("TableID", table.TableID)
