@@ -122,7 +122,18 @@ func columnsFromSchema(schema bigquery.Schema) string {
 
 func getQuery(schema bigquery.Schema, pgSchema, table string) string {
 	if *partitionDt != "" {
-		return fmt.Sprintf(`SELECT row_to_json(t) FROM (SELECT %s FROM %s.%s WHERE DATE_TRUNC('day', %s) = '%s') AS t`, columnsFromSchema(schema), pq.QuoteIdentifier(pgSchema), pq.QuoteIdentifier(table), pq.QuoteIdentifier(*partitionCol), *partitionDt)
+		return fmt.Sprintf(`SELECT row_to_json(t)
+			FROM (SELECT %s FROM %s.%s
+				WHERE %s >= TO_DATE('%s', 'YYYY-MM-DD')
+				AND %s < TO_DATE('%s', 'YYYY-MM-DD') + INTERVAL '1 day'
+			) AS t`,
+			columnsFromSchema(schema),
+			pq.QuoteIdentifier(pgSchema),
+			pq.QuoteIdentifier(table),
+			pq.QuoteIdentifier(*partitionCol),
+			*partitionDt,
+			pq.QuoteIdentifier(*partitionCol),
+			*partitionDt)
 	} else {
 		return fmt.Sprintf(`SELECT row_to_json(t) FROM (SELECT %s FROM %s.%s) AS t`, columnsFromSchema(schema), pq.QuoteIdentifier(pgSchema), pq.QuoteIdentifier(table))
 	}
