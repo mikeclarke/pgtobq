@@ -49,7 +49,7 @@ func (c *Column) ToFieldSchema() (*bigquery.FieldSchema, error) {
 	f.Required = c.IsNullable == "NO"
 
 	switch c.Type {
-	case "varchar", "bpchar", "text", "citext", "xml", "cidr", "inet", "uuid", "bit", "varbit", "bytea", "money", "jsonb":
+	case "varchar", "bpchar", "text", "citext", "xml", "cidr", "inet", "uuid", "bit", "varbit", "bytea", "money", "jsonb", "_text":
 		f.Type = bigquery.StringFieldType
 	case "int2", "int4", "int8":
 		f.Type = bigquery.IntegerFieldType
